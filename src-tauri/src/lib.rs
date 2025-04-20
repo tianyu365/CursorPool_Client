@@ -21,7 +21,6 @@ pub mod utils;
 
 pub fn run() {
     let mut builder = tauri::Builder::default()
-        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init());
 
     #[cfg(desktop)]
@@ -45,6 +44,7 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_positioner::init())
+        .plugin(tauri_plugin_macos_permissions::init())
         .setup(|app| {
             // 初始化配置
             if let Err(e) = config::init_config() {
@@ -161,11 +161,11 @@ pub fn run() {
             // 权限
             cursor_reset::commands::check_cursor_running,
             cursor_reset::commands::check_admin_privileges,
-            cursor_reset::commands::check_is_windows,
             // hook
             cursor_reset::commands::is_hook,
             cursor_reset::commands::hook_main_js,
             cursor_reset::commands::restore_hook,
+            cursor_reset::commands::get_running_cursor_path,
             // cursor
             cursor_reset::commands::close_cursor,
             cursor_reset::commands::launch_cursor,

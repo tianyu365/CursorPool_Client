@@ -3,7 +3,6 @@ use crate::database::Database;
 use crate::utils::hook::Hook;
 use crate::utils::id_generator::generate_new_ids;
 use crate::utils::paths::AppPaths;
-use crate::utils::retry;
 use crate::utils::ErrorReporter;
 use crate::utils::ProcessManager;
 use rusqlite::Connection;
@@ -62,7 +61,7 @@ pub async fn launch_cursor(db: State<'_, Database>) -> Result<bool, String> {
         }
     };
 
-    // 启动Cursor
+    // 启动Cursor 
     if let Err(e) = paths.launch_cursor() {
         error!(target: "cursor", "启动Cursor失败: {}", e);
         return Err(e);
@@ -530,17 +529,7 @@ pub async fn switch_account(
 /// 获取设备标识符和当前账号信息
 #[tauri::command]
 pub async fn get_machine_ids(db: State<'_, Database>) -> Result<Value, String> {
-    // 使用通用重试函数替代手动重试逻辑
-    retry::retry(
-        || async { try_get_machine_ids(&db) },
-        3,
-        Duration::from_millis(500),
-        "获取机器码"
-    ).await
-}
-
-fn try_get_machine_ids(db: &Database) -> Result<Value, String> {
-    let paths = match AppPaths::new_with_db(Some(db)) {
+    let paths = match AppPaths::new_with_db(Some(&db)) {
         Ok(p) => p,
         Err(e) => {
             error!(target: "machine_id", "获取应用路径失败: {}", e);
@@ -684,11 +673,18 @@ pub async fn is_hook(db: State<'_, Database>) -> Result<bool, String> {
         }
     };
 
-    let content = match fs::read_to_string(&paths.main_js) {
-        Ok(c) => c,
-        Err(e) => {
-            let err_msg = format!("读取 main.js 失败: {}", e);
-            error!(target: "hook", "{}", err_msg);
+    let content = match &paths.main_js {
+        Some(path) => match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                let err_msg = format!("读取 main.js 失败: {}", e);
+                error!(target: "hook_status", "{}", err_msg);
+                return Err(err_msg);
+            }
+        },
+        None => {
+            let err_msg = "MAIN_JS_NOT_FOUND".to_string();
+            error!(target: "hook_status", "{}", err_msg);
             return Err(err_msg);
         }
     };
@@ -797,12 +793,6 @@ pub async fn restore_hook(
     result
 }
 
-/// 检查操作系统是否为 Windows
-#[tauri::command]
-pub fn check_is_windows() -> bool {
-    crate::utils::privileges::is_windows()
-}
-
 /// 查找并验证用户选择的 Cursor 路径
 #[tauri::command]
 pub async fn find_cursor_path(
@@ -895,5 +885,83 @@ pub fn open_devtools(app_handle: tauri::AppHandle) {
         } else {
             window.close_devtools();
         }
+    }
+}
+
+/// 获取正在运行的Cursor进程路径
+#[tauri::command]
+pub fn get_running_cursor_path() -> Result<String, String> {
+    let process_manager = ProcessManager::new();
+    
+    if !process_manager.is_cursor_running() {
+        error!(target: "cursor", "Cursor进程未运行，无法获取路径");
+        return Err("Cursor进程未运行".to_string());
+    }
+    
+    // 在Windows系统上使用PowerShell命令获取进程路径
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        let output = Command::new("powershell")
+            .args([
+                "-WindowStyle", "Hidden", 
+                "-Command",
+                "(Get-Process cursor | Where-Object {$_.Path -ne $null} | Select-Object -First 1).Path"
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+            
+        match output {
+            Ok(output) => {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let clean_path = stdout.trim().to_string();
+                    
+                    if !clean_path.is_empty() {
+                        error!(target: "cursor", "成功获取Cursor进程路径: {}", clean_path);
+                        return Ok(clean_path);
+                    }
+                }
+            }
+            Err(e) => {
+                error!(target: "cursor", "执行PowerShell命令失败: {}", e);
+            }
+        }
+        
+        // 使用wmic作为后备方案
+        let wmic_output = Command::new("wmic")
+            .args(["process", "where", "name='cursor.exe'", "get", "ExecutablePath", "/value"])
+            .creation_flags(CREATE_NO_WINDOW) // CREATE_NO_WINDOW 标志
+            .output();
+            
+        if let Ok(output) = wmic_output {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if let Some(path) = stdout.lines()
+                    .find(|line| line.starts_with("ExecutablePath="))
+                    .map(|line| line.trim_start_matches("ExecutablePath=").trim()) {
+                    
+                    if !path.is_empty() {
+                        error!(target: "cursor", "通过wmic获取Cursor进程路径: {}", path);
+                        return Ok(path.to_string());
+                    }
+                }
+            }
+        }
+        
+        let err_msg = "无法获取Cursor进程路径".to_string();
+        error!(target: "cursor", "{}", err_msg);
+        return Err(err_msg);
+    }
+    
+    // 其他系统暂不支持
+    #[cfg(not(target_os = "windows"))]
+    {
+        let err_msg = "当前系统不支持获取进程路径".to_string();
+        error!(target: "cursor", "{}", err_msg);
+        return Err(err_msg);
     }
 }

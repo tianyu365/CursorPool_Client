@@ -34,9 +34,17 @@
 </script>
 
 <template>
-  <div class="flex items-center" :class="{ 'gap-0': props.compact, 'gap-1': !props.compact }">
+  <div
+    class="flex items-center"
+    :class="{ 'gap-0': props.compact, 'gap-1': !props.compact }"
+  >
     <!-- 标签 -->
-    <div v-if="showLabel" class="text-sm whitespace-nowrap">语言</div>
+    <div
+      v-if="showLabel"
+      class="text-sm whitespace-nowrap"
+    >
+      语言
+    </div>
 
     <!-- 语言选择下拉框 -->
     <n-select

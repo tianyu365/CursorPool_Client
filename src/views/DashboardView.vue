@@ -10,7 +10,6 @@
     NTag,
     NDivider,
     NModal,
-    NIcon,
     NScrollbar,
     useMessage,
   } from 'naive-ui'
@@ -18,20 +17,18 @@
   import { useI18n } from '../locales'
   import { checkCursorRunning } from '@/api'
   import type { UserInfo, CursorUserInfo, CursorUsageInfo } from '@/api/types'
-  import { WarningOutlined } from '@vicons/antd'
   import { Window } from '@tauri-apps/api/window'
   import DashboardTourComponent from '../components/DashboardTour.vue'
   import MarkdownRenderComponent from '../components/MarkdownRender.vue'
   import ArticleList from '../components/ArticleList.vue'
   import { useRouter } from 'vue-router'
-  import {
-    useUserStore,
-    useCursorStore,
-    useAppStore,
-    useNotificationStore,
-    useArticleStore,
-  } from '@/stores'
+  import { useUserStore, useCursorStore, useAppStore, useArticleStore } from '@/stores'
   import CursorRunningModal from '../components/CursorRunningModal.vue'
+  import { open } from '@tauri-apps/plugin-shell'
+  import {
+    checkFullDiskAccessPermission,
+    requestFullDiskAccessPermission,
+  } from 'tauri-plugin-macos-permissions-api'
 
   interface DeviceInfoState {
     machineCode: string
@@ -103,7 +100,6 @@
   const userStore = useUserStore()
   const cursorStore = useCursorStore()
   const appStore = useAppStore()
-  const notificationStore = useNotificationStore()
   const articleStore = useArticleStore()
 
   // 添加路由对象
@@ -196,35 +192,21 @@
     }
   }
 
-  // 获取机器码
-  const fetchMachineIds = async () => {
-    await cursorStore.fetchMachineIds()
-    updateLocalViewState()
-  }
-
-  // 获取 Cursor 账户信息
-  async function fetchCursorInfo() {
-    try {
-      await cursorStore.fetchCursorUsage()
-      updateLocalViewState()
-    } catch (error) {
-      console.error('获取 Cursor 账户信息失败:', error)
-
-      // 由于这是非核心功能，使用轻量级提示
-      message.warning(
-        error instanceof Error ? error.message : 'Cursor 账户信息获取失败，部分功能可能受限',
-      )
-    } finally {
-      loading.value = false
-    }
-  }
-
   // 添加新的 ref
   const showCursorRunningModal = ref(false)
   const pendingForceKillAction = ref<{
-    type: 'machine' | 'account' | 'quick' | 'hook'
+    type: 'machine' | 'account' | 'quick'
     params?: any
   } | null>(null)
+
+  const checkHookAndRedirect = () => {
+    if (!deviceInfo.value.hookStatus) {
+      message.info('需要先注入客户端才能使用这个功能')
+      router.push('/settings')
+      return false
+    }
+    return true
+  }
 
   // 修改机器码更换处理函数
   const handleMachineCodeChange = async (force_kill: boolean = false) => {
@@ -247,33 +229,13 @@
     }
   }
 
-  // 添加统一的自动注入函数，并增加日志
-  const autoApplyHook = async (): Promise<boolean> => {
-    try {
-      message.loading('正在自动注入...', { duration: 0 })
-      await cursorStore.applyHookToClient(false)
-      message.destroyAll()
-      message.success(i18n.value.systemControl.messages.applyHookSuccess)
-
-      // 更新视图状态
-      updateLocalViewState()
-
-      // 返回注入结果
-      return deviceInfo.value.hookStatus === true
-    } catch (error) {
-      console.error('自动注入失败:', error)
-      message.destroyAll()
-
-      router.push('/settings')
-      // 显示错误消息
-      message.error(error instanceof Error ? error.message : '注入失败，请前往设置页面手动操作')
-      return false
-    }
-  }
-
   // 修改账户切换处理函数
   const handleAccountSwitch = async () => {
     try {
+      if (!checkHookAndRedirect()) {
+        return
+      }
+
       accountSwitchLoading.value = true
 
       // 检查积分是否足够
@@ -292,16 +254,6 @@
         return
       }
 
-      // 检查 Hook 状态，如果未注入，直接调用注入
-      if (!deviceInfo.value.hookStatus) {
-        const hookSuccess = await autoApplyHook()
-
-        if (hookSuccess) {
-          await executeAccountSwitch()
-        }
-        return
-      }
-
       await executeAccountSwitch()
     } catch (error) {
       console.error('账户切换失败:', error)
@@ -314,6 +266,10 @@
   // 修改一键切换处理函数
   const handleQuickChange = async () => {
     try {
+      if (!checkHookAndRedirect()) {
+        return
+      }
+
       quickChangeLoading.value = true
 
       // 检查积分是否足够
@@ -329,16 +285,6 @@
       if (isRunning) {
         showCursorRunningModal.value = true
         pendingForceKillAction.value = { type: 'quick' }
-        return
-      }
-
-      // 检查 Hook 状态，如果未注入，直接调用注入
-      if (!deviceInfo.value.hookStatus) {
-        const hookSuccess = await autoApplyHook()
-
-        if (hookSuccess) {
-          await executeQuickChange()
-        }
         return
       }
 
@@ -359,12 +305,6 @@
       // 只有当操作成功时才显示成功消息和刷新数据
       if (result === true) {
         message.success(i18n.value.dashboard.accountChangeSuccess)
-
-        // 发送通知
-        await notificationStore.notify({
-          title: 'Cursor Pool',
-          body: i18n.value.dashboard.accountChangeSuccess,
-        })
 
         await fetchUserInfo()
         updateLocalViewState()
@@ -388,12 +328,6 @@
       // 只有当操作成功时才显示成功消息和刷新数据
       if (result === true) {
         message.success(i18n.value.dashboard.changeSuccess)
-
-        // 发送通知
-        await notificationStore.notify({
-          title: 'Cursor Pool',
-          body: i18n.value.dashboard.changeSuccess,
-        })
 
         await fetchUserInfo()
         updateLocalViewState()
@@ -420,6 +354,10 @@
     if (!pendingForceKillAction.value) return
 
     try {
+      if (!checkHookAndRedirect()) {
+        return
+      }
+
       loading.value = true
       message.loading('正在关闭 Cursor...', { duration: 0 })
 
@@ -434,26 +372,6 @@
       // 根据类型执行相应操作
       let operationSuccess = false
       let operationMessage = ''
-
-      // 先检查是否需要注入
-      if (!deviceInfo.value.hookStatus) {
-        message.loading('正在注入...', {
-          duration: 0,
-        })
-        try {
-          const hookSuccess = await autoApplyHook()
-
-          if (!hookSuccess) {
-            message.destroyAll()
-            return
-          }
-          message.destroyAll()
-        } catch (error) {
-          message.destroyAll()
-          message.error('注入失败，请前往设置页面手动操作')
-          return
-        }
-      }
 
       // 根据类型执行具体操作
       if (pendingForceKillAction.value.type === 'machine') {
@@ -487,18 +405,6 @@
           console.error('强制一键切换失败:', error)
           message.destroyAll()
           message.error(error instanceof Error ? error.message : String(error))
-          return
-        }
-      } else if (pendingForceKillAction.value.type === 'hook') {
-        message.loading('正在注入...', {
-          duration: 0,
-        })
-        const hookSuccess = await autoApplyHook()
-        operationSuccess = hookSuccess
-        if (hookSuccess) {
-          operationMessage = i18n.value.systemControl.messages.applyHookSuccess
-        } else {
-          message.destroyAll()
           return
         }
       }
@@ -568,13 +474,71 @@
     await appWindow.close()
   }
 
+  // 添加macOS权限检查功能
+  const checkMacOSPermissions = async () => {
+    if (appStore.currentPlatform === 'macos') {
+      try {
+        // 检查完全磁盘访问权限
+        const checkPermission = async () => {
+          const hasDiskAccess = await checkFullDiskAccessPermission()
+          if (hasDiskAccess) {
+            // 如果已获得权限，关闭弹窗
+            showAdminPrivilegeModal.value = false
+            return true
+          }
+          return false
+        }
+
+        // 首次检查
+        const initialCheck = await checkPermission()
+
+        if (!initialCheck) {
+          // 显示权限弹窗
+          showAdminPrivilegeModal.value = true
+        }
+      } catch (error) {
+        console.error('检查macOS权限失败:', error)
+      }
+    }
+  }
+
+  // 添加处理权限请求的函数
+  const handleRequestFullDiskAccess = async () => {
+    try {
+      // 请求完全磁盘访问权限
+      await requestFullDiskAccessPermission()
+
+      // 权限请求后开始循环检查权限状态
+      const checkLoop = async () => {
+        const hasDiskAccess = await checkFullDiskAccessPermission()
+        if (hasDiskAccess) {
+          // 如果已获得权限，关闭弹窗
+          showAdminPrivilegeModal.value = false
+          return
+        }
+        // 如果未获得权限，1秒后再次检查
+        setTimeout(checkLoop, 1000)
+      }
+
+      // 开始检查循环
+      checkLoop()
+    } catch (error) {
+      console.error('请求完全磁盘访问权限失败:', error)
+      message.error('请求权限失败')
+    }
+  }
+
   // 在组件挂载时获取所有信息
   onMounted(async () => {
     try {
       loading.value = true
 
-      // 检查通知权限
-      await notificationStore.checkPermission()
+      // 检查权限
+      if (appStore.currentPlatform === 'macos') {
+        await checkMacOSPermissions()
+      } else if (appStore.currentPlatform === 'windows') {
+        await checkPrivileges()
+      }
 
       // 初始化按钮显示状态
       await appStore.initButtonSettings()
@@ -592,14 +556,26 @@
         await fetchUserInfo()
 
         // 获取Cursor信息
-        await fetchMachineIds()
-        await fetchCursorInfo()
+        try {
+          await cursorStore.fetchMachineIds()
+        } catch (error) {
+          console.warn('获取机器码信息失败，但继续执行:', error)
+        }
+
+        try {
+          await cursorStore.fetchCursorUsage()
+        } catch (error) {
+          console.warn('获取Cursor使用量失败，但继续执行:', error)
+        }
+
+        try {
+          await cursorStore.checkHook()
+        } catch (error) {
+          console.warn('检查Hook状态失败，但继续执行:', error)
+        }
 
         // 更新视图状态
         updateLocalViewState()
-
-        // 检查管理员权限
-        await checkPrivileges()
 
         // 检查免责声明
         await appStore.fetchDisclaimer()
@@ -632,6 +608,9 @@
         // 更新视图状态
         updateLocalViewState()
       }
+    } catch (error) {
+      console.error('Dashboard初始化错误:', error)
+      message.error('初始化失败，请刷新页面重试')
     } finally {
       loading.value = false
     }
@@ -731,6 +710,10 @@
   // 修改机器码处理函数
   const handleMachineCodeClick = async () => {
     try {
+      if (!checkHookAndRedirect()) {
+        return
+      }
+
       machineCodeLoading.value = true
 
       // 检查 Cursor 是否在运行
@@ -738,16 +721,6 @@
       if (isRunning) {
         showCursorRunningModal.value = true
         pendingForceKillAction.value = { type: 'machine' }
-        return
-      }
-
-      // 检查 Hook 状态，如果未注入，直接调用注入
-      if (!deviceInfo.value.hookStatus) {
-        const hookSuccess = await autoApplyHook()
-
-        if (hookSuccess) {
-          await handleMachineCodeChange(false)
-        }
         return
       }
 
@@ -831,10 +804,17 @@
 </script>
 
 <template>
-  <n-space vertical size="large">
+  <n-space
+    vertical
+    size="large"
+  >
     <article-list v-if="userStore.userInfo && !appStore.showDisclaimerModal" />
 
-    <n-grid :cols="2" :x-gap="24" style="display: grid; grid-template-columns: repeat(2, 1fr)">
+    <n-grid
+      :cols="2"
+      :x-gap="24"
+      style="display: grid; grid-template-columns: repeat(2, 1fr)"
+    >
       <!-- 用户信息卡片 -->
       <n-grid-item style="display: grid">
         <n-card
@@ -843,10 +823,21 @@
           style="height: 100%; user-select: none"
         >
           <n-space vertical>
-            <n-space vertical :size="12" style="user-select: none">
-              <n-space :size="8" style="line-height: 1.2" class="user-info-username">
+            <n-space
+              vertical
+              :size="12"
+              style="user-select: none"
+            >
+              <n-space
+                :size="8"
+                style="line-height: 1.2"
+                class="user-info-username"
+              >
                 <span style="width: 70px">{{ i18n.dashboard.username }}</span>
-                <n-space :size="4" align="center">
+                <n-space
+                  :size="4"
+                  align="center"
+                >
                   <span
                     style="font-size: 14px; cursor: pointer"
                     @click="deviceInfo.userInfo?.username && copyText(deviceInfo.userInfo.username)"
@@ -878,9 +869,16 @@
 
               <n-divider style="margin: 0" />
 
-              <n-space :size="8" style="line-height: 1.2" class="user-info-email">
+              <n-space
+                :size="8"
+                style="line-height: 1.2"
+                class="user-info-email"
+              >
                 <span style="width: 70px">{{ i18n.dashboard.email }}</span>
-                <n-space :size="4" align="center">
+                <n-space
+                  :size="4"
+                  align="center"
+                >
                   <span
                     style="font-size: 14px; cursor: pointer"
                     @click="
@@ -903,9 +901,16 @@
                   </n-tag>
                 </n-space>
               </n-space>
-              <n-space :size="8" style="line-height: 1.2" class="user-info-cc-status">
+              <n-space
+                :size="8"
+                style="line-height: 1.2"
+                class="user-info-cc-status"
+              >
                 <span style="width: 70px">{{ i18n.dashboard.ccStatus }}</span>
-                <n-tag :type="deviceInfo.hookStatus === true ? 'success' : 'error'" size="tiny">
+                <n-tag
+                  :type="deviceInfo.hookStatus === true ? 'success' : 'error'"
+                  size="tiny"
+                >
                   {{
                     deviceInfo.hookStatus === true
                       ? i18n.systemControl.hookApplied
@@ -913,7 +918,11 @@
                   }}
                 </n-tag>
               </n-space>
-              <n-space :size="8" style="line-height: 1.2" class="user-info-register-time">
+              <n-space
+                :size="8"
+                style="line-height: 1.2"
+                class="user-info-register-time"
+              >
                 <span style="width: 70px">{{ i18n.dashboard.registerTime }}</span>
                 <span
                   style="font-size: 14px; cursor: pointer"
@@ -952,10 +961,21 @@
 
       <!-- 使用统计卡片 -->
       <n-grid-item style="display: grid">
-        <n-card :title="i18n.dashboard.usageStats" style="height: 100%; user-select: none">
-          <n-space vertical :size="24" style="height: 100%; justify-content: space-around">
+        <n-card
+          :title="i18n.dashboard.usageStats"
+          style="height: 100%; user-select: none"
+        >
+          <n-space
+            vertical
+            :size="24"
+            style="height: 100%; justify-content: space-around"
+          >
             <!-- 账户使用统计 -->
-            <n-space vertical :size="8" class="cursor-pool-usage">
+            <n-space
+              vertical
+              :size="8"
+              class="cursor-pool-usage"
+            >
               <n-space justify="space-between">
                 <span>{{ i18n.dashboard.cpUsage }}</span>
                 <n-space :size="0">
@@ -984,10 +1004,17 @@
             </n-space>
 
             <!-- Cursor GPT-4 使用统计 -->
-            <n-space vertical :size="8" class="advanced-model-usage">
+            <n-space
+              vertical
+              :size="8"
+              class="advanced-model-usage"
+            >
               <n-space justify="space-between">
                 <span>{{ i18n.dashboard.advancedModelUsage }}</span>
-                <n-space v-if="deviceInfo.cursorInfo.usage" :size="0">
+                <n-space
+                  v-if="deviceInfo.cursorInfo.usage"
+                  :size="0"
+                >
                   <n-number-animation
                     :from="0"
                     :to="deviceInfo.cursorInfo.usage['gpt-4']?.numRequests || 0"
@@ -1009,10 +1036,17 @@
             </n-space>
 
             <!-- Cursor GPT-3.5 使用统计 -->
-            <n-space vertical :size="8" class="basic-model-usage">
+            <n-space
+              vertical
+              :size="8"
+              class="basic-model-usage"
+            >
               <n-space justify="space-between">
                 <span>{{ i18n.dashboard.basicModelUsage }}</span>
-                <n-space v-if="deviceInfo.cursorInfo.usage" :size="0">
+                <n-space
+                  v-if="deviceInfo.cursorInfo.usage"
+                  :size="0"
+                >
                   <n-number-animation
                     :from="0"
                     :to="deviceInfo.cursorInfo.usage['gpt-3.5-turbo']?.numRequests || 0"
@@ -1068,7 +1102,11 @@
             >
               {{ i18n.dashboard.changeAccount }}
             </n-button>
-            <n-button type="primary" :loading="machineCodeLoading" @click="handleMachineCodeClick">
+            <n-button
+              type="primary"
+              :loading="machineCodeLoading"
+              @click="handleMachineCodeClick"
+            >
               {{ i18n.dashboard.changeMachineCode }}
             </n-button>
           </template>
@@ -1089,27 +1127,73 @@
     <n-modal
       v-model:show="showAdminPrivilegeModal"
       preset="dialog"
-      title="需要管理员权限"
+      title="需要权限"
       :closable="false"
       :mask-closable="false"
+      :close-on-esc="false"
       style="width: 500px"
     >
       <template #header>
         <n-space align="center">
-          <n-icon size="24" color="#f0a020">
-            <warning-outlined />
-          </n-icon>
-          <span>需要管理员权限</span>
+          <span>需要权限</span>
         </n-space>
       </template>
       <div style="margin: 24px 0">
-        <p>本程序需要管理员权限才能正常运行。</p>
-        <p style="margin-top: 12px; color: #999">
-          请右键点击程序图标,选择"以管理员身份运行"后重新启动程序。
+        <p>本程序需要足够的文件访问权限才能正常运行。</p>
+        <p
+          v-if="appStore.currentPlatform === 'windows'"
+          style="margin-top: 12px; color: #999"
+        >
+          请右键点击程序图标，选择"以管理员身份运行"后重新启动程序。
+        </p>
+        <template v-else-if="appStore.currentPlatform === 'macos'">
+          <div
+            style="
+              margin-top: 12px;
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+            "
+          >
+            <span style="color: #666">完全磁盘访问权限：</span>
+            <n-button
+              size="small"
+              type="primary"
+              @click="handleRequestFullDiskAccess"
+              >授予权限</n-button
+            >
+          </div>
+        </template>
+        <p
+          v-else
+          style="margin-top: 12px; color: #999"
+        >
+          请确保本程序有足够的文件访问权限。
         </p>
       </div>
       <template #action>
-        <n-button type="error" block @click="handleExit">退出程序</n-button>
+        <n-space justify="end">
+          <template v-if="appStore.currentPlatform === 'macos'">
+            <n-button
+              type="info"
+              @click="open('https://docs.52ai.org/troubleshooting/macos/permissions')"
+              >查看文档</n-button
+            >
+            <n-button
+              type="default"
+              @click="handleExit"
+              >退出程序</n-button
+            >
+          </template>
+          <template v-else>
+            <n-button
+              type="error"
+              block
+              @click="handleExit"
+              >退出程序</n-button
+            >
+          </template>
+        </n-space>
       </template>
     </n-modal>
 
@@ -1143,7 +1227,10 @@
     </n-modal>
 
     <!-- 添加引导组件 -->
-    <DashboardTourComponent :show="shouldShowTour" :on-complete="handleTourComplete" />
+    <DashboardTourComponent
+      :show="shouldShowTour"
+      :on-complete="handleTourComplete"
+    />
   </n-space>
 </template>
 

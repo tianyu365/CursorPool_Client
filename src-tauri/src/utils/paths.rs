@@ -1,3 +1,5 @@
+use tracing::error;
+
 use crate::config;
 use crate::database::Database;
 use std::fs;
@@ -12,8 +14,7 @@ pub struct AppPaths {
     pub auth: PathBuf,
     pub db: PathBuf,
     pub cursor_exe: PathBuf,
-    pub cursor_updater: PathBuf,
-    pub main_js: PathBuf,
+    pub main_js: Option<PathBuf>,
 }
 
 impl AppPaths {
@@ -90,54 +91,78 @@ impl AppPaths {
             PathBuf::from(default_path_str)
         };
 
-        // 获取 cursor-updater 路径
-        let cursor_updater = if cfg!(target_os = "windows") {
-            let local_app_data = std::env::var("LOCALAPPDATA")
-                .map_err(|e| format!("获取 LOCALAPPDATA 路径失败: {}", e))?;
-            let updater_path_str = config::CONFIG
-                .read()
-                .unwrap()
-                .paths
-                .windows
-                .cursor_updater
-                .clone();
-            PathBuf::from(updater_path_str.replace("%LOCALAPPDATA%", &local_app_data))
-        } else if cfg!(target_os = "macos") {
-            let home = std::env::var("HOME").map_err(|e| format!("获取 HOME 路径失败: {}", e))?;
-            let updater_path_str = config::CONFIG
-                .read()
-                .unwrap()
-                .paths
-                .macos
-                .cursor_updater
-                .clone();
-            PathBuf::from(updater_path_str.replace("~", &home))
-        } else {
-            let home = std::env::var("HOME").map_err(|e| format!("获取 HOME 路径失败: {}", e))?;
-            let updater_path_str = config::CONFIG
-                .read()
-                .unwrap()
-                .paths
-                .linux
-                .cursor_updater
-                .clone();
-            PathBuf::from(updater_path_str.replace("~", &home))
-        };
-
-        // 获取 main.js 路径 - 现在优先从数据库查找
+        // 获取 main.js 路径 - 现在优先从数据库查找，但如果找不到则设置为None而不是返回错误
         let main_js = if let Some(db) = db {
             if let Ok(Some(saved_path)) = Self::get_saved_path_from_db(db) {
                 // 检查保存的路径是否有效
                 if saved_path.exists() {
-                    saved_path
+                    Some(saved_path)
                 } else {
-                    Self::find_main_js_path()?
+                    // 尝试查找但不抛出错误
+                    match Self::find_main_js_path() {
+                        Ok(path) => Some(path),
+                        Err(e) => {
+                            // 记录错误但不阻止初始化
+                            error!(target: "paths", "查找main.js失败: {}", e);
+                            None
+                        }
+                    }
                 }
             } else {
-                Self::find_main_js_path()?
+                // 尝试查找但不抛出错误
+                match Self::find_main_js_path() {
+                    Ok(path) => Some(path),
+                    Err(e) => {
+                        // 记录错误但不阻止初始化
+                        error!(target: "paths", "查找main.js失败: {}", e);
+                        None
+                    }
+                }
             }
         } else {
-            Self::find_main_js_path()?
+            // 尝试查找但不抛出错误
+            match Self::find_main_js_path() {
+                Ok(path) => Some(path),
+                Err(e) => {
+                    // 记录错误但不阻止初始化
+                    error!(target: "paths", "查找main.js失败: {}", e);
+                    None
+                }
+            }
+        };
+        
+        // 如果cursor_exe路径不存在但main_js存在，尝试从main_js推导cursor_exe路径
+        let cursor_exe = if !cursor_exe.exists() && cfg!(target_os = "windows") {
+            if let Some(ref main_js_path) = main_js {
+                // 预期路径结构: X:\path\to\cursor\resources\app\out\main.js
+                if let Some(out_dir) = main_js_path.parent() {
+                    if let Some(app_dir) = out_dir.parent() {
+                        if let Some(resources_dir) = app_dir.parent() {
+                            if let Some(cursor_dir) = resources_dir.parent() {
+                                let inferred_path = cursor_dir.join("Cursor.exe");
+                                if inferred_path.exists() {
+                                    println!("从main.js路径推导到Cursor.exe: {}", inferred_path.display());
+                                    inferred_path
+                                } else {
+                                    cursor_exe
+                                }
+                            } else {
+                                cursor_exe
+                            }
+                        } else {
+                            cursor_exe
+                        }
+                    } else {
+                        cursor_exe
+                    }
+                } else {
+                    cursor_exe
+                }
+            } else {
+                cursor_exe
+            }
+        } else {
+            cursor_exe
         };
 
         let paths = Self {
@@ -145,7 +170,6 @@ impl AppPaths {
             auth: global_storage.join("cursor.auth.json"),
             db: global_storage.join("state.vscdb"),
             cursor_exe,
-            cursor_updater,
             main_js,
         };
 
@@ -312,7 +336,8 @@ impl AppPaths {
 
     // 从用户选择的路径中查找main.js
     pub fn find_main_js_from_selected_path(selected_path: &str) -> Result<PathBuf, String> {
-        let selected_path_buf = PathBuf::from(selected_path);
+        let clean_path = selected_path.trim();
+        let selected_path_buf = PathBuf::from(clean_path);
 
         // 检查是否选择的是cursor.exe或Cursor.exe
         if selected_path_buf.file_name().map_or(false, |name| {
@@ -463,6 +488,37 @@ impl AppPaths {
     // 启动 Cursor
     pub fn launch_cursor(&self) -> Result<(), String> {
         if !self.cursor_exe.exists() {
+            // 当默认cursor.exe路径不存在时，尝试从main.js路径推导
+            if cfg!(target_os = "windows") {
+                if let Some(ref main_js_path) = self.main_js {
+                    if main_js_path.exists() {
+                        // 预期路径结构: X:\path\to\cursor\resources\app\out\main.js
+                        if let Some(out_dir) = main_js_path.parent() {
+                            if let Some(app_dir) = out_dir.parent() {
+                                if let Some(resources_dir) = app_dir.parent() {
+                                    if let Some(cursor_dir) = resources_dir.parent() {
+                                        // 推导的cursor.exe路径
+                                        let cursor_exe_path = cursor_dir.join("Cursor.exe");
+                                        
+                                        // 检查文件是否存在
+                                        if cursor_exe_path.exists() {
+                                            println!("根据main.js路径推导到Cursor.exe: {}", cursor_exe_path.display());
+                                            
+                                            // 直接使用推导的路径启动
+                                            std::process::Command::new(&cursor_exe_path)
+                                                .spawn()
+                                                .map_err(|e| format!("启动 Cursor 失败: {}", e))?;
+                                                
+                                            return Ok(());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
             return Err("Cursor 可执行文件不存在".to_string());
         }
 
@@ -471,26 +527,5 @@ impl AppPaths {
             .map_err(|e| format!("启动 Cursor 失败: {}", e))?;
 
         Ok(())
-    }
-
-    // 新增: 检查 cursor-updater 路径
-    pub fn check_cursor_updater(&self) -> Result<(), String> {
-        if !self.cursor_updater.exists() {
-            return Err("cursor-updater 路径不存在".to_string());
-        }
-
-        if self.cursor_updater.is_file() {
-            Ok(())
-        } else if self.cursor_updater.is_dir() {
-            // 可选: 列出目录内容用于调试
-            if let Ok(entries) = std::fs::read_dir(&self.cursor_updater) {
-                for entry in entries.flatten() {
-                    println!("- {:?}", entry.path());
-                }
-            }
-            Ok(())
-        } else {
-            Err("cursor-updater 路径既不是文件也不是目录".to_string())
-        }
     }
 }

@@ -1,5 +1,4 @@
 import { listen } from '@tauri-apps/api/event'
-import { useNotificationStore } from '../stores'
 
 /**
  * 事件监听器列表
@@ -29,26 +28,6 @@ export async function initEventListeners() {
   })
 
   listeners.push(unlistenDashboardRefresh)
-
-  // 添加账户使用阈值警告事件监听
-  const unlistenAccountUsage = await listen('account-usage-warning', (event) => {
-    const notificationStore = useNotificationStore()
-    const payload = event.payload as {
-      data: {
-        account: string
-        remaining_percentage: number
-      }
-    }
-
-    // 显示系统通知
-    notificationStore.notify({
-      title: '账户使用量警告',
-      body: `当前账户${payload.data?.account || ''}高级模型剩余使用量仅剩 ${payload.data?.remaining_percentage || 0}%，建议切换账户。`,
-      id: 1,
-    })
-  })
-
-  listeners.push(unlistenAccountUsage)
 }
 
 /**

@@ -16,6 +16,7 @@
       "singleline": 10,
       "multiline": 1
     }],
+    "vue/first-attribute-linebreak": "off",
     // todo 临时屏蔽
     "@typescript-eslint/no-explicit-any": "off",
     "@typescript-eslint/no-unused-vars": ["warn", {

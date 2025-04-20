@@ -172,7 +172,11 @@
     </n-scrollbar>
     <template #footer>
       <n-space justify="end">
-        <n-button type="primary" @click="markAsRead">已读</n-button>
+        <n-button
+          type="primary"
+          @click="markAsRead"
+          >已读</n-button
+        >
       </n-space>
     </template>
   </n-modal>

@@ -102,7 +102,10 @@
     </template>
     <template #action>
       <n-space justify="end">
-        <n-button :type="confirmButtonType" @click="handleConfirm">
+        <n-button
+          :type="confirmButtonType"
+          @click="handleConfirm"
+        >
           {{ confirmButtonText }}
         </n-button>
       </n-space>

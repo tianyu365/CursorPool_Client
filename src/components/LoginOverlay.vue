@@ -461,17 +461,31 @@
 
 <template>
   <!-- 添加一个隐藏的假表单来欺骗浏览器的自动填充 -->
-  <form style="display: none" aria-hidden="true">
+  <form
+    style="display: none"
+    aria-hidden="true"
+  >
     <input type="text" />
     <input type="email" />
     <input type="password" />
   </form>
 
   <div class="login-overlay">
-    <n-card :title="formTitle" class="login-card">
-      <n-tabs v-model:value="activeTab" type="line" animated class="full-width-tabs">
+    <n-card
+      :title="formTitle"
+      class="login-card"
+    >
+      <n-tabs
+        v-model:value="activeTab"
+        type="line"
+        animated
+        class="full-width-tabs"
+      >
         <!-- 登录标签页 -->
-        <n-tab-pane name="login" :tab="messages[currentLang].login.title">
+        <n-tab-pane
+          name="login"
+          :tab="messages[currentLang].login.title"
+        >
           <n-form class="compact-form">
             <n-form-item>
               <n-auto-complete
@@ -507,10 +521,16 @@
                 >
                   {{ messages[currentLang].login.loginButton }}
                 </n-button>
-                <inbound-selector compact :show-label="false" />
+                <inbound-selector
+                  compact
+                  :show-label="false"
+                />
               </n-space>
 
-              <n-button text @click="showForgotPassword = true">
+              <n-button
+                text
+                @click="showForgotPassword = true"
+              >
                 {{ t('common.forgotPassword') }}
               </n-button>
             </n-space>
@@ -518,7 +538,10 @@
         </n-tab-pane>
 
         <!-- 注册标签页 -->
-        <n-tab-pane name="register" :tab="messages[currentLang].login.registerButton">
+        <n-tab-pane
+          name="register"
+          :tab="messages[currentLang].login.registerButton"
+        >
           <n-form class="compact-form">
             <n-form-item>
               <n-auto-complete
@@ -657,7 +680,11 @@
           <n-button @click="showForgotPassword = false">
             {{ messages[currentLang].login.loginButton === '登录' ? '取消' : 'Cancel' }}
           </n-button>
-          <n-button type="primary" :loading="forgotPasswordLoading" @click="handleForgotPassword">
+          <n-button
+            type="primary"
+            :loading="forgotPasswordLoading"
+            @click="handleForgotPassword"
+          >
             {{ messages[currentLang].login.loginButton === '登录' ? '重置密码' : 'Reset Password' }}
           </n-button>
         </n-space>

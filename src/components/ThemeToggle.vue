@@ -7,7 +7,11 @@
 </script>
 
 <template>
-  <n-button circle secondary @click="toggleTheme">
+  <n-button
+    circle
+    secondary
+    @click="toggleTheme"
+  >
     <template #icon>
       <n-icon>
         <component :is="isDarkMode ? SunnySharp : Moon" />

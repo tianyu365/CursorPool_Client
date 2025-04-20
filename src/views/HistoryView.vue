@@ -101,7 +101,10 @@
 </script>
 
 <template>
-  <n-space vertical :size="24">
+  <n-space
+    vertical
+    :size="24"
+  >
     <n-card :title="messages[currentLang].history.filter">
       <n-space justify="space-between">
         <n-date-picker

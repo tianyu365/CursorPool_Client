@@ -18,8 +18,7 @@
   import { useI18n } from '../locales'
   import { messages } from '../locales/messages'
   import { Window } from '@tauri-apps/api/window'
-  import { platform } from '@tauri-apps/plugin-os'
-  import { useUserStore, useAppCloseStore } from '../stores'
+  import { useUserStore, useAppCloseStore, useAppStore } from '../stores'
 
   // 基础状态
   const router = useRouter() as unknown as Router
@@ -27,10 +26,7 @@
   const appWindow = Window.getCurrent()
   const userStore = useUserStore()
   const appCloseStore = useAppCloseStore()
-
-  // 平台相关状态
-  const currentPlatform = ref('')
-  const isMacOS = computed(() => currentPlatform.value === 'macos')
+  const appStore = useAppStore()
 
   // 登录状态管理 - 使用计算属性从store获取状态
   const isCheckingLogin = computed(() => userStore.isCheckingLogin)
@@ -121,13 +117,6 @@
     // 使用store检查登录状态
     await userStore.checkLoginStatus()
 
-    // 获取平台信息
-    try {
-      currentPlatform.value = await platform()
-    } catch (error) {
-      console.error('获取平台信息失败:', error)
-    }
-
     // 添加用户登出事件监听
     window.addEventListener('user-logout', handleUserLogout)
   })
@@ -154,15 +143,28 @@
 </script>
 
 <template>
-  <n-layout has-sider :style="isMacOS ? {} : { borderRadius: '6px' }" style="height: 100vh">
+  <n-layout
+    has-sider
+    :style="appStore.currentPlatform === 'macos' ? {} : { borderRadius: '6px' }"
+    style="height: 100vh"
+  >
     <!-- 统一的拖拽区域 -->
-    <div class="drag-region" data-tauri-drag-region></div>
+    <div
+      class="drag-region"
+      data-tauri-drag-region
+    ></div>
 
     <!-- 登录遮罩 -->
-    <login-overlay v-if="showLoginOverlay" @login-success="handleLoginSuccess" />
+    <login-overlay
+      v-if="showLoginOverlay"
+      @login-success="handleLoginSuccess"
+    />
 
     <!-- 加载指示器 -->
-    <div v-if="isCheckingLogin" class="loading-overlay">
+    <div
+      v-if="isCheckingLogin"
+      class="loading-overlay"
+    >
       <n-spin size="large" />
     </div>
 
@@ -170,15 +172,21 @@
     <div
       class="window-controls"
       :class="{
-        'mac-controls': isMacOS,
+        'mac-controls': appStore.currentPlatform === 'macos',
       }"
     >
-      <div class="control-button minimize" @click="windowControls.minimize">
+      <div
+        class="control-button minimize"
+        @click="windowControls.minimize"
+      >
         <n-icon>
           <RemoveOutline />
         </n-icon>
       </div>
-      <div class="control-button close" @click="windowControls.close">
+      <div
+        class="control-button close"
+        @click="windowControls.close"
+      >
         <n-icon>
           <Close />
         </n-icon>
@@ -200,10 +208,18 @@
       @expand="collapsed = false"
     >
       <div class="logo">
-        <h2 v-if="!collapsed" style="user-select: none">
+        <h2
+          v-if="!collapsed"
+          style="user-select: none"
+        >
           {{ i18n.appName }}
         </h2>
-        <h2 v-else style="user-select: none">CP</h2>
+        <h2
+          v-else
+          style="user-select: none"
+        >
+          CP
+        </h2>
       </div>
       <n-menu
         :options="menuOptions"
@@ -215,7 +231,10 @@
         style="-webkit-app-region: no-drag"
         @update:value="handleMenuClick"
       />
-      <div class="sider-footer" style="-webkit-app-region: no-drag">
+      <div
+        class="sider-footer"
+        style="-webkit-app-region: no-drag"
+      >
         <theme-toggle style="-webkit-app-region: no-drag" />
       </div>
     </n-layout-sider>

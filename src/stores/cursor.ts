@@ -14,12 +14,16 @@ import {
   getAccount,
   saveHistoryRecord,
   findCursorPath,
+  getRunningCursorPath,
 } from '@/api'
 import type { UsageInfo, MachineInfo } from '@/api/types'
 import type { HistoryAccount } from '@/types/history'
 import { useHistoryStore } from './history'
 import { open } from '@tauri-apps/plugin-dialog'
 import Logger from '../utils/logger'
+import { useRouter } from 'vue-router'
+import { useAppStore } from './app'
+import { Command } from '@tauri-apps/plugin-shell'
 
 export const useCursorStore = defineStore('cursor', () => {
   // 状态
@@ -37,8 +41,8 @@ export const useCursorStore = defineStore('cursor', () => {
   })
   const isLoading = ref(false)
   const hookStatus = ref<boolean | null>(null)
-
-  // 新增状态
+  const router = useRouter()
+  const appStore = useAppStore()
   const operationLoading = ref(false)
   const machineCodeLoading = ref(false)
   const accountSwitchLoading = ref(false)
@@ -54,6 +58,9 @@ export const useCursorStore = defineStore('cursor', () => {
     type: string
     params?: any
   } | null>(null)
+
+  // 添加macOS权限错误类型
+  const macOSPermissionError = 'MACOS_PERMISSION_ERROR'
 
   // Getters
   const gpt4Usage = computed(() => {
@@ -148,53 +155,64 @@ export const useCursorStore = defineStore('cursor', () => {
    */
   async function fetchCursorUsage() {
     try {
+      // 如果没有token，尝试获取机器码信息
       if (!cursorToken.value) {
-        await fetchMachineIds()
+        try {
+          // 获取机器码信息，但失败不阻止后续流程
+          await fetchMachineIds()
+        } catch (error) {
+          // 只记录错误但继续尝试使用现有token
+          console.error('获取机器码信息失败，但仍尝试获取使用量:', error)
+          await Logger.warn('获取机器码信息失败，但仍尝试获取使用量')
+        }
       }
 
+      // 检查token是否可用
       if (!cursorToken.value) {
         console.error('未找到 Cursor Token')
-        // 设置错误类型为数据库错误
+        // 设置错误类型为数据库错误，但保留现有的usage数据
         cursorInfo.value = {
-          userInfo: null,
-          usage: null,
+          userInfo: cursorInfo.value?.userInfo,
+          usage: cursorInfo.value?.usage, // 保留现有usage数据
           errorType: 'cursor_db_error',
         }
         return
       }
 
       isLoading.value = true
-      const usageData = await getUsage(cursorToken.value)
+      try {
+        // 无论如何都尝试获取使用量数据
+        const usageData = await getUsage(cursorToken.value)
 
-      // TODO: 临时处理，Cursor高级模型使用量上限为50 适配cursor最新政策
-      if (usageData && usageData['gpt-4'] && usageData['gpt-4'].maxRequestUsage === 150) {
-        usageData['gpt-4'].maxRequestUsage = 50
+        // TODO: 临时处理，Cursor高级模型使用量上限为50 适配cursor最新政策
+        if (usageData && usageData['gpt-4'] && usageData['gpt-4'].maxRequestUsage === 150) {
+          usageData['gpt-4'].maxRequestUsage = 50
+        }
+
+        // 更新状态，保留现有的userInfo
+        cursorInfo.value = {
+          userInfo: {
+            email: currentAccount.value,
+            email_verified: true,
+            name: currentAccount.value.split('@')[0],
+            sub: '',
+            updated_at: new Date().toISOString(),
+            picture: null,
+          },
+          usage: usageData,
+          errorType: null,
+        }
+      } catch (usageError) {
+        console.error('获取 Cursor 使用量失败:', usageError)
+
+        // 设置适当的错误类型，但保留现有数据
+        const errorMsg = usageError instanceof Error ? usageError.message : String(usageError)
+        cursorInfo.value = {
+          userInfo: cursorInfo.value?.userInfo,
+          usage: cursorInfo.value?.usage, // 保留现有usage数据
+          errorType: errorMsg,
+        }
       }
-
-      cursorInfo.value = {
-        userInfo: {
-          email: currentAccount.value,
-          email_verified: true,
-          name: currentAccount.value.split('@')[0],
-          sub: '',
-          updated_at: new Date().toISOString(),
-          picture: null,
-        },
-        usage: usageData,
-        errorType: null,
-      }
-    } catch (error) {
-      console.error('获取 Cursor 使用量失败:', error)
-
-      // 设置适当的错误类型
-      const errorMsg = error instanceof Error ? error.message : String(error)
-      cursorInfo.value = {
-        userInfo: cursorInfo.value?.userInfo,
-        usage: null,
-        errorType: errorMsg,
-      }
-
-      throw error
     } finally {
       isLoading.value = false
     }
@@ -364,22 +382,27 @@ export const useCursorStore = defineStore('cursor', () => {
       // 清除先前的状态
       isLoading.value = true
 
-      const status = await checkHookStatus()
+      try {
+        const status = await checkHookStatus()
 
-      // 更新状态
-      hookStatus.value = status
-      return status
-    } catch (error) {
-      console.error('检查Hook状态失败:', error)
-      // 如果是找不到main.js文件，不更新状态
-      if (error instanceof Error && error.message.includes('MAIN_JS_NOT_FOUND')) {
-        console.log('检测到main.js文件路径问题')
-        // 保持现有状态
-        return hookStatus.value
+        // 更新状态
+        hookStatus.value = status
+        return status
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error)
+
+        // 如果是找不到main.js的错误，设置默认值false而不是抛出错误
+        if (errorMsg.includes('MAIN_JS_NOT_FOUND') || errorMsg.includes('创建应用路径失败')) {
+          await Logger.warn('找不到main.js，设置hook状态为false')
+          hookStatus.value = false
+          return false
+        }
+
+        // 其他错误情况下重置状态
+        console.error('检查Hook状态失败:', error)
+        hookStatus.value = null
+        throw error
       }
-      // 其他错误情况下重置状态
-      hookStatus.value = null
-      throw error
     } finally {
       isLoading.value = false
     }
@@ -394,17 +417,95 @@ export const useCursorStore = defineStore('cursor', () => {
       operationLoading.value = true
       isLoading.value = true
 
-      // 执行操作
-      await applyHook(forceKill)
+      // 检查Cursor是否在运行
+      const isRunning = await checkCursorRunning()
+      await Logger.info(`Cursor运行状态: ${isRunning ? '运行中' : '未运行'}`)
 
-      // 明确设置状态为 true
-      hookStatus.value = true
+      // 如果Cursor在运行且不是强制模式，返回特殊状态让外部组件显示确认弹窗
+      if (isRunning && !forceKill) {
+        await Logger.info('检测到Cursor正在运行，需要用户确认')
+        return { status: 'running', action: 'applyHook' }
+      }
 
-      // 触发检查以确保状态已更新
-      await checkHook()
+      // Windows平台特殊处理 - 尝试注入运行中的Cursor
+      if (appStore.currentPlatform === 'windows' && isRunning && forceKill) {
+        try {
+          await Logger.info('强制模式：检测到Cursor正在运行，尝试注入运行中的Cursor')
+          await injectRunningCursor()
+          hookStatus.value = true
+          await checkHook()
+          await Logger.info('注入运行中的Cursor成功')
+          return { status: 'success' }
+        } catch (injectError) {
+          await Logger.error(`注入运行中的Cursor失败: ${injectError}`)
+          // 注入失败，继续下一步
+        }
+      }
 
-      await Logger.info('Hook注入成功')
-      return true
+      // 尝试使用系统变量查找Cursor路径并注入
+      try {
+        await Logger.info('尝试使用系统变量查找Cursor路径并注入')
+        await applyHook(forceKill)
+        hookStatus.value = true
+        await checkHook()
+        await Logger.info('使用系统变量查找的路径注入Hook成功')
+        return { status: 'success' }
+      } catch (error) {
+        // 获取完整的错误信息
+        const errorMsg = error instanceof Error ? error.message : String(error)
+
+        // 如果是找不到main.js的错误，继续下一步
+        if (errorMsg.includes('MAIN_JS_NOT_FOUND') || errorMsg.includes('创建应用路径失败')) {
+          // 显示文件选择模态框
+          await Logger.info('无法自动查找Cursor路径，显示文件选择模态框')
+          if (router) router.push('/settings')
+          setPendingAction('applyHook', { forceKill })
+          return { status: 'need_select_file' }
+        } else if (errorMsg.includes('Cursor进程正在运行') && !forceKill) {
+          // 如果是Cursor正在运行的错误且不是强制模式
+          await Logger.info('后端检测到Cursor正在运行且不是强制模式，显示确认对话框')
+          return { status: 'running', action: 'applyHook' }
+        } else if (
+          (errorMsg.includes('Cursor进程正在运行') || errorMsg.includes('请先关闭 Cursor')) &&
+          forceKill
+        ) {
+          // 如果是强制模式，尝试关闭Cursor并注入
+          await Logger.info('强制模式：检测到Cursor正在运行，尝试关闭并重新注入')
+          try {
+            await closeCursorApp()
+            await new Promise((resolve) => setTimeout(resolve, 1000))
+            await applyHook(true)
+            hookStatus.value = true
+            await checkHook()
+            await Logger.info('强制关闭Cursor并注入Hook成功')
+            return { status: 'success' }
+          } catch (closeError) {
+            const closeErrorMsg =
+              closeError instanceof Error ? closeError.message : String(closeError)
+
+            // 检查是否是macOS达到最大重试次数错误
+            if (
+              appStore.currentPlatform === 'macos' &&
+              (closeErrorMsg.includes('达到最大重试次数') ||
+                closeErrorMsg.includes('无法终止所有Cursor进程'))
+            ) {
+              await Logger.error(`macOS关闭Cursor失败，可能需要系统权限: ${closeErrorMsg}`)
+              // 返回特殊状态，让外部组件显示macOS权限提示
+              return {
+                status: 'error',
+                errorType: macOSPermissionError,
+                message: '无法终止Cursor进程，需要系统权限',
+              }
+            }
+
+            // 其他错误直接抛出
+            throw closeError
+          }
+        } else {
+          // 其他错误，直接抛出
+          throw error
+        }
+      }
     } catch (error) {
       await Logger.error(`Hook注入失败: ${error}`)
       hookStatus.value = false
@@ -654,12 +755,8 @@ export const useCursorStore = defineStore('cursor', () => {
         return
       }
 
-      console.log('用户选择的文件路径:', selected)
-
       // 调用API处理选择的文件路径
       const result = await findCursorPath(selected as string)
-
-      console.log('findCursorPath结果:', result)
 
       if (result) {
         showSelectFileModal.value = false
@@ -726,6 +823,94 @@ export const useCursorStore = defineStore('cursor', () => {
     }
   }
 
+  /**
+   * 注入正在运行的Cursor
+   * 获取正在运行的Cursor路径，检查它是否已被注入，如果没有则执行注入操作
+   */
+  async function injectRunningCursor() {
+    try {
+      operationLoading.value = true
+      await Logger.info('开始注入正在运行的Cursor')
+
+      // 获取正在运行的Cursor路径
+      const cursorExePath = await getRunningCursorPath()
+      await Logger.info(`获取到的Cursor可执行文件路径: ${cursorExePath}`)
+
+      // 保存路径到数据库
+      if (cursorExePath) {
+        await findCursorPath(cursorExePath)
+
+        // 检查当前注入状态
+        const isCurrentlyHooked = await checkHookStatus()
+
+        // 如果已经注入，显示信息并返回
+        if (isCurrentlyHooked) {
+          await Logger.info('Cursor已经被注入，无需重复操作')
+          hookStatus.value = true
+          return true
+        }
+
+        // 执行注入操作
+        await applyHook(true)
+        await Logger.info('注入操作完成')
+
+        // 更新hook状态
+        hookStatus.value = true
+        await Logger.info('成功注入正在运行的Cursor')
+
+        try {
+          await launchCursorApp()
+          await Logger.info('Cursor已重新启动')
+        } catch (launchError) {
+          console.error('重新启动Cursor失败:', launchError)
+          await Logger.error(`重新启动Cursor失败: ${launchError}`)
+        }
+
+        return true
+      } else {
+        throw new Error('未能获取正在运行的Cursor路径')
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      console.error('注入失败:', errorMsg)
+      await Logger.error(`注入正在运行的Cursor失败: ${errorMsg}`)
+
+      // 如果操作失败，尝试更新hook状态以确保UI显示正确
+      try {
+        await checkHook()
+      } catch (checkError) {
+        console.error('检查Hook状态也失败:', checkError)
+      }
+
+      throw error
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  /**
+   * 打开macOS系统偏好设置权限面板
+   */
+  async function openMacOSPermissionSettings() {
+    try {
+      // 在macOS上使用命令行打开系统偏好设置
+      const result = await Command.create('exec-sh', [
+        '-c',
+        "open 'x-apple.systempreferences:com.apple.preference.security?Privacy_AppBundles'",
+      ]).execute()
+
+      if (result.code === 0) {
+        return true
+      } else {
+        console.error('打开macOS权限设置失败，错误码:', result.code)
+        return false
+      }
+    } catch (error) {
+      console.error('打开macOS权限设置失败:', error)
+      return false
+    }
+  }
+
   return {
     // 状态
     machineCode,
@@ -740,6 +925,7 @@ export const useCursorStore = defineStore('cursor', () => {
     quickChangeLoading,
     isForceKilling,
     needSaveCurrentAccount,
+    macOSPermissionError,
 
     // 添加文件选择模态框状态
     showSelectFileModal,
@@ -768,9 +954,13 @@ export const useCursorStore = defineStore('cursor', () => {
     refreshAllCursorData,
     switchToHistoryAccount,
     forceCloseAndSwitch,
+    openMacOSPermissionSettings,
 
     // 添加文件选择相关方法
     handleSelectCursorPath,
     setPendingAction,
+
+    // 注入正在运行的Cursor
+    injectRunningCursor,
   }
 })

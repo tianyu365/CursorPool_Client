@@ -9,7 +9,6 @@ import {
   changePassword as apiChangePassword,
   resetPassword as apiResetPassword,
   checkAdminPrivileges,
-  checkIsWindows,
 } from '@/api'
 import type { UserInfo } from '@/api/types'
 
@@ -49,16 +48,6 @@ export const useUserStore = defineStore('user', () => {
       isCheckingAdmin.value = true
       const adminStatus = await checkAdminPrivileges()
       isAdmin.value = adminStatus
-
-      // 如果不是管理员，检查是否是 Windows 平台
-      if (!adminStatus) {
-        const isWinPlatform = await checkIsWindows()
-        // 只有在 Windows 平台才需要管理员权限
-        // 如果不是 Windows 平台，则视为有权限
-        if (!isWinPlatform) {
-          isAdmin.value = true
-        }
-      }
 
       return isAdmin.value
     } catch (error) {

@@ -1,6 +1,5 @@
 use crate::config;
 use crate::database::Database;
-use crate::scheduler::tasks;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -60,14 +59,6 @@ impl SchedulerState {
         let dashboard_refresh_key = config::get_db_key("dashboard_refresh_interval");
         let dashboard_interval = db.inner().get_item(&dashboard_refresh_key).ok().flatten();
         
-        // 尝试从数据库加载账户检查间隔
-        let account_check_key = config::get_db_key("account_limit_check_interval");
-        let account_check_interval = db.inner().get_item(&account_check_key).ok().flatten();
-        
-        // 尝试从数据库加载账户使用阈值
-        let account_threshold_key = config::get_db_key("account_usage_threshold");
-        let account_threshold = db.inner().get_item(&account_threshold_key).ok().flatten();
-        
         // 如果数据库中没有设置值，则使用默认值并保存到数据库
         let scheduler_config = config::get_scheduler_config();
         
@@ -80,24 +71,6 @@ impl SchedulerState {
             }
         }
         
-        if account_check_interval.is_none() {
-            if let Err(e) = db.inner().set_item(
-                &account_check_key,
-                &scheduler_config.account_limit_check_interval.to_string(),
-            ) {
-                error!("保存账户检查间隔到数据库失败: {}", e);
-            }
-        }
-        
-        if account_threshold.is_none() {
-            if let Err(e) = db.inner().set_item(
-                &account_threshold_key,
-                &scheduler_config.account_usage_threshold.to_string(),
-            ) {
-                error!("保存账户使用阈值到数据库失败: {}", e);
-            }
-        }
-        
         info!("已加载任务配置");
         Ok(())
     }
@@ -106,9 +79,6 @@ impl SchedulerState {
     async fn register_tasks(&mut self) -> Result<(), String> {
         // 注册刷新任务
         self.register_refresh_task().await?;
-        
-        // 注册账户使用限制检查任务
-        self.register_account_limit_check_task().await?;
         
         info!("所有任务已注册完成");
         Ok(())
@@ -170,62 +140,6 @@ impl SchedulerState {
         
         self.tasks.insert(task_id, handle);
         info!("已注册仪表盘刷新任务");
-        Ok(())
-    }
-    
-    /// 注册账户使用限制检查任务 - 使用数据库中的间隔配置
-    async fn register_account_limit_check_task(&mut self) -> Result<(), String> {
-        let app_handle = self.app_handle.clone();
-        let task_id = "check_account_limit".to_string();
-        
-        // 获取数据库实例
-        let db = match self.app_handle.try_state::<Database>() {
-            Some(db) => db,
-            None => {
-                let err = "无法获取数据库实例".to_string();
-                error!("{}", err);
-                return Err(err);
-            }
-        };
-        
-        // 从数据库获取检查间隔
-        let account_check_key = config::get_db_key("account_limit_check_interval");
-        let check_interval_str = match db.inner().get_item(&account_check_key) {
-            Ok(Some(val)) => val,
-            _ => {
-                // 使用默认值
-                let default_interval = config::get_scheduler_config().account_limit_check_interval;
-                default_interval.to_string()
-            }
-        };
-        
-        // 解析检查间隔
-        let check_interval = match check_interval_str.parse::<u64>() {
-            Ok(val) => val,
-            Err(e) => {
-                let err = format!("解析账户检查间隔失败: {}", e);
-                error!("{}", err);
-                // 使用默认值
-                config::get_scheduler_config().account_limit_check_interval
-            }
-        };
-        
-        info!("账户检查间隔设置为 {} 秒", check_interval);
-        
-        let handle = tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(check_interval));
-            
-            loop {
-                interval.tick().await;
-                // 执行账户检查
-                if let Err(e) = tasks::check_account_limit(&app_handle).await {
-                    error!("检查账户使用限制失败: {}", e);
-                }
-            }
-        });
-        
-        self.tasks.insert(task_id, handle);
-        info!("已注册账户使用限制检查任务");
         Ok(())
     }
 } 

@@ -10,7 +10,7 @@ import {
 import type { PublicInfo } from '@/api/types'
 import { darkTheme } from 'naive-ui'
 import { version as packageVersion } from '../../package.json'
-
+import { platform } from '@tauri-apps/plugin-os'
 import disclaimerMd from '../disclaimer.md?raw'
 
 // 支持的语言
@@ -42,6 +42,7 @@ export const useAppStore = defineStore('app', () => {
   const isDarkMode = computed(() => theme.value === 'dark')
   const currentTheme = computed(() => (isDarkMode.value ? darkTheme : null))
   const currentLocale = computed(() => language.value)
+  const currentPlatform = computed(() => platform())
 
   // 引导状态的计算属性
   const shouldShowTour = computed(() => {
@@ -308,6 +309,7 @@ export const useAppStore = defineStore('app', () => {
     currentTheme,
     currentLocale,
     shouldShowTour,
+    currentPlatform,
 
     // Actions
     toggleTheme,

@@ -5,7 +5,6 @@ use tauri::AppHandle;
 use tokio::sync::Mutex;
 use tracing::info;
 
-pub mod tasks;
 pub mod executor;
 
 /// 任务调度器

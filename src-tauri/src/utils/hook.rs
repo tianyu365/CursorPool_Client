@@ -65,7 +65,15 @@ impl Hook {
             }
         })?;
 
-        let file_path = &paths.main_js;
+        // 检查main_js是否存在
+        let file_path = match &paths.main_js {
+            Some(path) => path,
+            None => {
+                let error_msg = "未找到main.js路径".to_string();
+                error!(target: "hook", "{}", error_msg);
+                return Err(HookError::MainJsNotFound(error_msg));
+            }
+        };
 
         // 检查文件是否存在
         if !file_path.exists() {

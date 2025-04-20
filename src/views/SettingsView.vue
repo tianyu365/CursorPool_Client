@@ -12,14 +12,14 @@
     NSpin,
     NSelect,
     NTag,
+    NTooltip,
   } from 'naive-ui'
   import { useI18n } from '../locales'
   import LanguageSwitch from '../components/LanguageSwitch.vue'
   import InboundSelector from '../components/InboundSelector.vue'
   import CloseTypeSelector from '../components/CloseTypeSelector.vue'
   import CursorRunningModal from '../components/CursorRunningModal.vue'
-  import NotificationPermissionSetting from '../components/NotificationPermissionSetting.vue'
-  import { changePassword, activate, checkCursorRunning, applyHook, restoreHook } from '@/api'
+  import { changePassword, activate, checkCursorRunning, restoreHook, getUserData } from '@/api'
   import { addHistoryRecord } from '../utils/history'
   import { version } from '../../package.json'
   import { useUserStore } from '../stores/user'
@@ -34,6 +34,7 @@
   const cursorStore = useCursorStore()
   const router = useRouter()
   const appStore = useAppStore()
+  const cursorPath = ref<string | null>(null)
 
   interface SettingsForm {
     activationCode: string
@@ -165,51 +166,82 @@
 
     try {
       loadingRef.value = true
-      if (!force_kill) {
-        const isRunning = await checkCursorRunning()
-        if (isRunning) {
-          showControlRunningModal.value = true
-          pendingControlAction.value = action
-          return
-        }
-      }
 
-      try {
-        let successMessage = ''
-        let historyAction = ''
+      let successMessage = ''
+      let historyAction = ''
 
-        switch (action) {
-          case 'applyHook':
-            await applyHook(force_kill)
+      // 根据操作类型执行相应的操作
+      switch (action) {
+        case 'applyHook': {
+          const result = await cursorStore.applyHookToClient(force_kill)
+
+          if (result.status === 'success') {
             successMessage = t('systemControl.messages.applyHookSuccess')
             historyAction = t('systemControl.history.applyHook')
             controlStatus.value.isHooked = true
-            break
-          case 'restoreHook':
+
+            message.success(successMessage)
+            addHistoryRecord(t('systemControl.title'), historyAction)
+          } else if (result.status === 'running') {
+            showControlRunningModal.value = true
+            pendingControlAction.value = action
+            return
+          } else if (result.status === 'need_select_file') {
+            return
+          } else if (
+            result.status === 'error' &&
+            result.errorType === cursorStore.macOSPermissionError
+          ) {
+            // 处理macOS权限错误
+            message.error('无法终止Cursor进程，需要系统权限')
+            cursorStore.setPendingAction(action, {
+              forceKill: force_kill,
+              errorType: cursorStore.macOSPermissionError,
+              message: result.message,
+            })
+            cursorStore.showSelectFileModal = true
+            return
+          }
+          break
+        }
+
+        case 'restoreHook': {
+          if (!force_kill) {
+            const isRunning = await checkCursorRunning()
+            if (isRunning) {
+              showControlRunningModal.value = true
+              pendingControlAction.value = action
+              return
+            }
+          }
+
+          try {
             await restoreHook(force_kill)
             successMessage = t('systemControl.messages.restoreHookSuccess')
             historyAction = t('systemControl.history.restoreHook')
             controlStatus.value.isHooked = false
-            break
+
+            // 显示成功消息
+            message.success(successMessage)
+            showControlRunningModal.value = false
+            addHistoryRecord(t('systemControl.title'), historyAction)
+          } catch (error) {
+            // 获取完整的错误信息
+            const errorMsg = error instanceof Error ? error.message : String(error)
+
+            // 检查是否包含MAIN_JS_NOT_FOUND
+            if (errorMsg.includes('MAIN_JS_NOT_FOUND') || errorMsg.includes('创建应用路径失败')) {
+              cursorStore.setPendingAction(action, { forceKill: force_kill })
+              return
+            }
+            throw error
+          }
+          break
         }
-
-        message.success(successMessage)
-        showControlRunningModal.value = false
-        addHistoryRecord(t('systemControl.title'), historyAction)
-
-        // 操作完成后重新检查状态
-        await checkControlStatus()
-      } catch (error) {
-        // 获取完整的错误信息
-        const errorMsg = error instanceof Error ? error.message : String(error)
-
-        // 检查是否包含MAIN_JS_NOT_FOUND
-        if (errorMsg.includes('MAIN_JS_NOT_FOUND') || errorMsg.includes('创建应用路径失败')) {
-          cursorStore.setPendingAction(action, { forceKill: force_kill })
-          return
-        }
-        throw error
       }
+
+      // 操作完成后重新检查状态
+      await checkControlStatus()
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error)
       console.error('控制操作错误:', errorMsg)
@@ -230,6 +262,9 @@
       // 处理可能为null的情况
       controlStatus.value.isHooked = hookResult === true
 
+      // 检查Cursor路径
+      await getCursorPath()
+
       // 确保UI反映最新状态
       await nextTick()
     } catch (error) {
@@ -241,10 +276,37 @@
     }
   }
 
+  // 获取Cursor路径
+  const getCursorPath = async () => {
+    try {
+      // 从数据库读取cursor路径
+      const path = await getUserData('system.cursor.path.mainJs')
+      cursorPath.value = path
+    } catch (error) {
+      console.error('获取Cursor路径失败:', error)
+      cursorPath.value = null
+    }
+  }
+
   // 处理强制关闭
   const handleControlForceKill = async () => {
     if (pendingControlAction.value) {
-      await handleControlAction(pendingControlAction.value, true)
+      try {
+        // 关闭确认对话框
+        showControlRunningModal.value = false
+        // 设置为加载状态
+        const loadingRef = {
+          applyHook: applyHookLoading,
+          restoreHook: restoreHookLoading,
+        }[pendingControlAction.value]
+        loadingRef.value = true
+
+        // 使用强制关闭参数调用操作
+        await handleControlAction(pendingControlAction.value, true)
+      } catch (error) {
+        console.error('强制关闭操作失败:', error)
+        message.error(t('systemControl.messages.forceFailed'))
+      }
     }
   }
 
@@ -295,13 +357,19 @@
 </script>
 
 <template>
-  <n-space vertical :size="24">
+  <n-space
+    vertical
+    :size="24"
+  >
     <!-- 系统控制 -->
     <n-card>
       <template #header>
         <div class="text-xl font-medium">{{ t('systemControl.title') }}</div>
       </template>
-      <n-space vertical :size="16">
+      <n-space
+        vertical
+        :size="16"
+      >
         <div class="flex items-center justify-between">
           <div>
             {{ t('systemControl.clientStatus') }}:
@@ -309,7 +377,11 @@
               <n-spin size="small" />
             </template>
             <template v-else>
-              <n-tag :type="controlStatus.isHooked ? 'success' : 'warning'" size="small" round>
+              <n-tag
+                :type="controlStatus.isHooked ? 'success' : 'warning'"
+                size="small"
+                round
+              >
                 {{
                   controlStatus.isHooked
                     ? t('systemControl.hookApplied')
@@ -338,8 +410,34 @@
           </div>
         </div>
 
-        <!-- 系统通知状态 -->
-        <notification-permission-setting />
+        <!-- 注入Cursor路径 -->
+        <div v-if="controlStatus.isHooked && cursorPath && appStore.currentPlatform === 'windows'">
+          <div class="flex items-center justify-between gap-2 mt-1">
+            <div
+              class="text-sm overflow-hidden text-ellipsis whitespace-nowrap"
+              style="flex: 1"
+            >
+              <n-tooltip
+                placement="bottom"
+                trigger="hover"
+                style="max-width: 400px; white-space: normal; word-break: break-word"
+              >
+                <template #trigger>
+                  <span class="cursor-pointer"
+                    >{{ t('systemControl.cursorPath') }}{{ cursorPath }}</span
+                  >
+                </template>
+                <div style="white-space: normal; word-break: break-all">{{ cursorPath }}</div>
+              </n-tooltip>
+            </div>
+            <n-button
+              type="primary"
+              @click="cursorStore.showSelectFileModal = true"
+            >
+              {{ t('systemControl.changePath') }}
+            </n-button>
+          </div>
+        </div>
       </n-space>
     </n-card>
 
@@ -353,19 +451,28 @@
           <div class="flex items-center">
             <div class="text-base w-20">{{ t('inbound.title') }}</div>
             <div class="flex-1">
-              <inbound-selector :show-label="false" class="settings-selector" />
+              <inbound-selector
+                :show-label="false"
+                class="settings-selector"
+              />
             </div>
           </div>
           <div class="flex items-center">
             <div class="text-base w-20">{{ t('settings.closeMethod') }}</div>
             <div class="flex-1">
-              <close-type-selector :show-label="false" class="settings-selector" />
+              <close-type-selector
+                :show-label="false"
+                class="settings-selector"
+              />
             </div>
           </div>
           <div class="flex items-center">
             <div class="text-base w-20">{{ t('language.title') }}</div>
             <div class="flex-1">
-              <language-switch :show-label="false" class="settings-selector" />
+              <language-switch
+                :show-label="false"
+                class="settings-selector"
+              />
             </div>
           </div>
           <div class="flex items-center">
@@ -389,7 +496,10 @@
       <template #header>
         <div class="text-xl font-medium">{{ t('settings.activation') }}</div>
       </template>
-      <n-space vertical :size="16">
+      <n-space
+        vertical
+        :size="16"
+      >
         <div class="flex items-center justify-between">
           <div style="width: 80px">{{ t('settings.activationCode') }}</div>
           <div class="flex-1">
@@ -399,7 +509,11 @@
                 :placeholder="t('message.pleaseInputActivationCode')"
                 class="flex-1"
               />
-              <n-button type="primary" :loading="activateLoading" @click="handleActivate">
+              <n-button
+                type="primary"
+                :loading="activateLoading"
+                @click="handleActivate"
+              >
                 {{ t('settings.activate') }}
               </n-button>
             </n-input-group>
@@ -413,7 +527,10 @@
       <template #header>
         <div class="text-xl font-medium">{{ t('settings.changePassword') }}</div>
       </template>
-      <n-space vertical :size="16">
+      <n-space
+        vertical
+        :size="16"
+      >
         <n-form
           :model="formValue"
           label-placement="left"
@@ -465,7 +582,10 @@
               >
                 {{ t('settings.changePassword') }}
               </n-button>
-              <n-button type="error" @click="handleLogout">
+              <n-button
+                type="error"
+                @click="handleLogout"
+              >
                 {{ t('common.logout') }}
               </n-button>
             </n-space>
@@ -479,16 +599,30 @@
       <template #header>
         <div class="text-xl font-medium">{{ t('settings.about') }}</div>
       </template>
-      <n-space vertical :size="12">
+      <n-space
+        vertical
+        :size="12"
+      >
         <p>{{ t('about.appName') }} v{{ version }}</p>
         <p>
           {{ t('about.copyright') }} ©
           {{ new Date().getFullYear() }}
-          <n-button text tag="a" href="https://github.com/Sanyela" target="_blank">
+          <n-button
+            text
+            tag="a"
+            href="https://github.com/Sanyela"
+            target="_blank"
+          >
             Sanyela
           </n-button>
           &
-          <n-button text tag="a" href="https://github.com/Cloxl" target="_blank">Cloxl</n-button>
+          <n-button
+            text
+            tag="a"
+            href="https://github.com/Cloxl"
+            target="_blank"
+            >Cloxl</n-button
+          >
         </p>
         <p>{{ t('about.license') }}</p>
       </n-space>

@@ -120,9 +120,15 @@
 </script>
 
 <template>
-  <div class="flex items-center" :class="{ 'gap-0': props.compact, 'gap-1': !props.compact }">
+  <div
+    class="flex items-center"
+    :class="{ 'gap-0': props.compact, 'gap-1': !props.compact }"
+  >
     <!-- 标签 -->
-    <div v-if="showLabel && !iconOnly" class="text-sm whitespace-nowrap">
+    <div
+      v-if="showLabel && !iconOnly"
+      class="text-sm whitespace-nowrap"
+    >
       {{ t('inbound.title') }}
     </div>
 

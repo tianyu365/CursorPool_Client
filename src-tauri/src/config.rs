@@ -36,21 +36,18 @@ pub struct PathConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowsPaths {
     pub cursor_exe: String,
-    pub cursor_updater: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MacOSPaths {
     pub cursor_app: String,
     pub cursor_resources: String,
-    pub cursor_updater: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinuxPaths {
     pub cursor_exe: String,
     pub cursor_resources: String,
-    pub cursor_updater: String,
 }
 
 // 数据库键配置
@@ -123,18 +120,14 @@ impl Default for AppConfig {
             paths: PathConfig {
                 windows: WindowsPaths {
                     cursor_exe: "%LOCALAPPDATA%\\Programs\\cursor\\Cursor.exe".to_string(),
-                    cursor_updater: "%LOCALAPPDATA%\\cursor-updater".to_string(),
                 },
                 macos: MacOSPaths {
                     cursor_app: "/Applications/Cursor.app/Contents/MacOS/Cursor".to_string(),
-                    cursor_resources: "/Applications/Cursor.app/Contents/Resources/app/out/main.js"
-                        .to_string(),
-                    cursor_updater: "~/Library/Application Support/cursor-updater".to_string(),
+                    cursor_resources: "/Applications/Cursor.app/Contents/Resources/app/out/main.js".to_string(),
                 },
                 linux: LinuxPaths {
                     cursor_exe: "/usr/bin/cursor".to_string(),
                     cursor_resources: "/usr/lib/cursor/resources/app/out/main.js".to_string(),
-                    cursor_updater: "~/.config/cursor-updater".to_string(),
                 },
             },
             db_keys: DbKeyConfig {

@@ -42,7 +42,10 @@
   <div class="fixed inset-0 flex-center bg-black/65 backdrop-blur-md z-1000 select-none">
     <n-card class="w-460px max-w-90% rounded-lg shadow-lg">
       <div class="py-2 flex flex-col items-center">
-        <div v-if="showSpinner" class="mb-4">
+        <div
+          v-if="showSpinner"
+          class="mb-4"
+        >
           <n-spin size="large" />
         </div>
 
@@ -61,14 +64,21 @@
           </div>
 
           <!-- 前往官网按钮 -->
-          <n-button type="primary" class="mt-2 mb-4" @click="openOfficialWebsite">
+          <n-button
+            type="primary"
+            class="mt-2 mb-4"
+            @click="openOfficialWebsite"
+          >
             前往官网下载
           </n-button>
         </template>
 
         <!-- 标准更新显示进度条 -->
         <template v-else>
-          <n-space vertical class="w-full mb-2">
+          <n-space
+            vertical
+            class="w-full mb-2"
+          >
             <n-progress
               type="line"
               :percentage="updaterStore.progressPercentage"
@@ -79,7 +89,10 @@
             />
           </n-space>
 
-          <div v-if="updaterStore.isDownloading" class="text-xs text-$n-text-color-3 mt-1">
+          <div
+            v-if="updaterStore.isDownloading"
+            class="text-xs text-$n-text-color-3 mt-1"
+          >
             {{ Math.round((updaterStore.downloadedBytes / 1024 / 1024) * 100) / 100 }}
             MB /
             {{ Math.round((updaterStore.totalBytes / 1024 / 1024) * 100) / 100 }}

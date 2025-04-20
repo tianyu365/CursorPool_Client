@@ -202,23 +202,3 @@ pub fn clean_old_logs(log_dir: &Path, days: i64) -> Result<usize, String> {
 
     Ok(removed_count)
 }
-
-// 使用示例
-// ```
-// use crate::utils::logger;
-//
-// fn main() {
-//     let config = logger::LogConfig {
-//         log_dir: PathBuf::from("logs"),
-//         console_output: true,
-//         log_level: "debug".to_string(),
-//         json_format: false,
-//     };
-//
-//     logger::init_logger(config).expect("初始化日志系统失败");
-//
-//     // 使用日志
-//     tracing::info!(target: "api", "这是一条信息日志");
-//     tracing::error!(target: "database", "这是一条错误日志");
-// }
-// ```

@@ -222,11 +222,18 @@
 </script>
 
 <template>
-  <n-space vertical :size="24">
+  <n-space
+    vertical
+    :size="24"
+  >
     <n-card :title="t('historyAccount.title')">
       <template #header-extra>
         <n-space>
-          <n-button :loading="historyStore.loadingAccounts" type="primary" @click="refreshUsage">
+          <n-button
+            :loading="historyStore.loadingAccounts"
+            type="primary"
+            @click="refreshUsage"
+          >
             {{ t('historyAccount.refreshAll') }}
           </n-button>
           <n-button

@@ -284,6 +284,19 @@ export async function checkHookStatus(): Promise<boolean> {
     return await invoke<boolean>('is_hook', {})
   } catch (error) {
     console.error('检查hook状态错误:', error)
+
+    // 如果是找不到main.js或类似错误，直接返回false而不是抛出错误
+    const errorMsg = error instanceof Error ? error.message : String(error)
+    if (
+      errorMsg.includes('MAIN_JS_NOT_FOUND') ||
+      errorMsg.includes('创建应用路径失败') ||
+      errorMsg.includes('main.js 路径不存在')
+    ) {
+      console.warn('找不到main.js，默认返回hook状态为false')
+      return false
+    }
+
+    // 其他错误继续抛出
     throw error
   }
 }
@@ -341,15 +354,6 @@ export async function resetPassword(email: string, code: string, password: strin
     handleApiResponse(response)
   } catch (error) {
     throw new ApiError(error instanceof Error ? error.message : '重置密码失败')
-  }
-}
-
-// 添加新的 API 函数来检测系统是否为 Windows
-export async function checkIsWindows(): Promise<boolean> {
-  try {
-    return await invoke<boolean>('check_is_windows')
-  } catch (error) {
-    throw new ApiError(error instanceof Error ? error.message : '检查系统是否为Windows失败')
   }
 }
 
@@ -680,4 +684,16 @@ export async function markArticleRead(articleId: number): Promise<void> {
  */
 export const openDevTools = () => {
   return invoke('open_devtools')
+}
+
+// 获取正在运行的Cursor路径
+export async function getRunningCursorPath(): Promise<string> {
+  try {
+    return await invoke<string>('get_running_cursor_path')
+  } catch (error) {
+    console.error('获取正在运行的Cursor路径失败:', error)
+    throw new ApiError(
+      error instanceof Error ? error.message : '当前没有正在运行的Cursor, 请打开Cursor',
+    )
+  }
 }
