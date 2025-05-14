@@ -114,19 +114,13 @@ jobs:
 
       - name: Build Tauri App (macOS)
         if: matrix.platform == 'macos-latest' || matrix.platform == 'macos-14'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          pnpm tauri build ${{ matrix.args }}
+          pnpm tauri build ${{ matrix.args }} --no-sign
 
       - name: Build Tauri App (Windows)
         if: matrix.platform == 'windows-latest'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          pnpm tauri build ${{ matrix.args }}
+          pnpm tauri build ${{ matrix.args }} --no-sign
 
       - name: Upload Dev Build Artifacts
         uses: actions/upload-artifact@v4
