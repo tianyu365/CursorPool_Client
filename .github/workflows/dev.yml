@@ -115,12 +115,12 @@ jobs:
       - name: Build Tauri App (macOS)
         if: matrix.platform == 'macos-latest' || matrix.platform == 'macos-14'
         run: |
-          pnpm tauri build ${{ matrix.args }} --no-sign
+          pnpm tauri build ${{ matrix.args }} -- --no-sign
 
       - name: Build Tauri App (Windows)
         if: matrix.platform == 'windows-latest'
         run: |
-          pnpm tauri build ${{ matrix.args }} --no-sign
+          pnpm tauri build ${{ matrix.args }} -- --no-sign
 
       - name: Upload Dev Build Artifacts
         uses: actions/upload-artifact@v4
