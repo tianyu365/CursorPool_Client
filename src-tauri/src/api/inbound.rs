@@ -188,7 +188,7 @@ pub async fn init_inbound_config(app_handle: &AppHandle) -> Result<(), String> {
                         url: default_api_url
                             .split("/api")
                             .next()
-                            .unwrap_or("https://pool.52ai.org")
+                            .unwrap_or("http://27.25.151.67:7771")
                             .to_string(),
                     }],
                 };
